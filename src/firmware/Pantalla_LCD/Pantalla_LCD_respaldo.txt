@@ -1,0 +1,474 @@
+
+#include <Arduino.h>
+#include <LiquidCrystal.h>
+
+// ========================================
+// SISTEMA AUTOMATIZADO - ESP32-S3
+// LCD 16x2 + 4 BOTONES
+// VERSION DE SIMULACION
+// ========================================
+
+// Pines LCD
+const int RS = 4;
+const int EN = 5;
+const int D4 = 6;
+const int D5 = 7;
+const int D6 = 15;
+const int D7 = 16;
+
+LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
+
+// Botones fisicos
+const int BTN_ARRIBA = 17;
+const int BTN_ABAJO = 18;
+const int BTN_OK = 8;
+const int BTN_VOLVER = 9;
+
+// Estados de pantalla
+enum Pantalla {
+  MENU_PRINCIPAL,
+  CONFIRMAR_INICIO,
+  MAQUINA_ACTIVA,
+  MENU_SENSORES,
+  OTRO_SUBMENU
+};
+
+Pantalla pantallaActual = MENU_PRINCIPAL;
+
+// Menu principal
+const char* opciones[] = {
+  "INICIAR MAQ.",
+  "VER SENSORES",
+  "ESTADO SISTEMA",
+  "CONFIGURACION"
+};
+
+const int TOTAL_OPCIONES = 4;
+int opcionActual = 0;
+
+// Submenu de sensores
+const char* sensores[] = {
+  "CAPACITIVO",
+  "VIBRACION",
+  "PARO EMERGENCIA",
+  "MOTOR PASO",
+  "PISTON"
+};
+
+const int TOTAL_SENSORES = 5;
+int sensorActual = 0;
+
+// Variables de simulacion
+bool confirmarSi = false;
+bool maquinaSimulada = false;
+
+// ========================================
+// CONTADOR DE TIEMPO DE OPERACION
+// ========================================
+
+unsigned long inicioOperacion = 0;
+unsigned long tiempoAcumulado = 0;
+
+void iniciarOperacion() {
+  if (!maquinaSimulada) {
+    inicioOperacion = millis();
+    maquinaSimulada = true;
+  }
+}
+
+void detenerOperacion() {
+  if (maquinaSimulada) {
+    tiempoAcumulado += millis() - inicioOperacion;
+    maquinaSimulada = false;
+  }
+}
+
+unsigned long obtenerTiempoOperacion() {
+  unsigned long total = tiempoAcumulado;
+
+  if (maquinaSimulada) {
+    total += millis() - inicioOperacion;
+  }
+
+  return total / 1000;
+}
+
+// ========================================
+// LECTURA DE BOTONES CON ANTIRREBOTE
+// ========================================
+
+enum class Boton {
+  NINGUNO,
+  ARRIBA,
+  ABAJO,
+  BOTON_OK,
+  VOLVER
+};
+
+// Declaraciones anticipadas
+Boton leerBoton();
+void procesarMenu(Boton boton);
+
+const int pinesBotones[] = {
+  BTN_ARRIBA,
+  BTN_ABAJO,
+  BTN_OK,
+  BTN_VOLVER
+};
+
+bool estadoEstable[4] = {
+  HIGH, HIGH, HIGH, HIGH
+};
+
+bool ultimaLectura[4] = {
+  HIGH, HIGH, HIGH, HIGH
+};
+
+unsigned long ultimoCambio[4] = {
+  0, 0, 0, 0
+};
+
+const unsigned long REBOTE_MS = 40;
+
+Boton leerBoton() {
+
+  Boton evento = Boton::NINGUNO;
+
+  for (int i = 0; i < 4; i++) {
+
+    bool lectura = digitalRead(pinesBotones[i]);
+
+    if (lectura != ultimaLectura[i]) {
+      ultimoCambio[i] = millis();
+      ultimaLectura[i] = lectura;
+    }
+
+    if (millis() - ultimoCambio[i] >= REBOTE_MS) {
+
+      if (lectura != estadoEstable[i]) {
+
+        estadoEstable[i] = lectura;
+
+        // Registrar solo la pulsacion,
+        // no la liberacion.
+        if (lectura == LOW && evento == Boton::NINGUNO) {
+        evento = static_cast<Boton>(i + 1);
+      }
+      }
+    }
+  }
+
+  return evento;
+}
+
+// ========================================
+// BIENVENIDA
+// ========================================
+
+void mostrarBienvenida() {
+
+  lcd.clear();
+
+  lcd.setCursor(2, 0);
+  lcd.print("BIENVENIDOS");
+
+  lcd.setCursor(1, 1);
+  lcd.print("SISTEMA ESP32");
+
+  delay(3000);
+}
+
+// ========================================
+// MENU PRINCIPAL
+// ========================================
+
+void mostrarMenu() {
+
+  lcd.clear();
+
+  int primera = min(
+    opcionActual,
+    TOTAL_OPCIONES - 2
+  );
+
+  lcd.setCursor(0, 0);
+  lcd.print(opcionActual == primera ? ">" : " ");
+  lcd.print(opciones[primera]);
+
+  lcd.setCursor(0, 1);
+  lcd.print(
+    opcionActual == primera + 1 ? ">" : " "
+  );
+  lcd.print(opciones[primera + 1]);
+}
+
+// ========================================
+// CONFIRMACION DE ARRANQUE
+// ========================================
+
+void mostrarConfirmacion() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("INICIAR MAQUINA?");
+
+  lcd.setCursor(0, 1);
+
+  if (confirmarSi) {
+    lcd.print(" NO      >SI");
+  } else {
+    lcd.print(">NO       SI");
+  }
+}
+
+// ========================================
+// MAQUINA ACTIVA (SOLO SIMULACION)
+// ========================================
+
+void mostrarMaquinaActiva() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("MAQUINA ACTIVA");
+
+  lcd.setCursor(0, 1);
+  lcd.print("SOLO SIMULACION");
+}
+
+// ========================================
+// CONSULTA DE SENSORES
+// ========================================
+
+void mostrarSensor() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(sensores[sensorActual]);
+
+  lcd.setCursor(0, 1);
+
+  switch (sensorActual) {
+
+    case 0:
+      lcd.print("OBJETO DETECTADO");
+      break;
+
+    case 1:
+      lcd.print("SIN DETECCION");
+      break;
+
+    case 2:
+      lcd.print("NO VERIFICADO");
+      break;
+
+    case 3:
+      lcd.print("DETENIDO (SIM)");
+      break;
+
+    case 4:
+      lcd.print("DESCONOCIDO");
+      break;
+  }
+}
+
+// ========================================
+// OTROS SUBMENUS
+// ========================================
+
+void mostrarOtroSubmenu() {
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(opciones[opcionActual]);
+
+  lcd.setCursor(0, 1);
+  lcd.print("EN DESARROLLO");
+}
+
+// ========================================
+// PROCESAR NAVEGACION
+// ========================================
+
+void procesarMenu(Boton boton) {
+
+  if (boton == Boton::NINGUNO) {
+    return;
+  }
+
+  switch (pantallaActual) {
+
+    case MENU_PRINCIPAL:
+
+      if (boton == Boton::ARRIBA && opcionActual > 0) {
+        opcionActual--;
+        mostrarMenu();
+      }
+
+      else if (
+        boton == Boton::ABAJO &&
+        opcionActual < TOTAL_OPCIONES - 1
+      ) {
+        opcionActual++;
+        mostrarMenu();
+      }
+
+      else if (boton == Boton::BOTON_OK) {
+
+        if (opcionActual == 0) {
+          confirmarSi = false;
+          pantallaActual = CONFIRMAR_INICIO;
+          mostrarConfirmacion();
+        }
+
+        else if (opcionActual == 1) {
+          sensorActual = 0;
+          pantallaActual = MENU_SENSORES;
+          mostrarSensor();
+        }
+
+        else {
+          pantallaActual = OTRO_SUBMENU;
+          mostrarOtroSubmenu();
+        }
+      }
+      break;
+
+    case CONFIRMAR_INICIO:
+
+      if (boton == Boton::ARRIBA) {
+        confirmarSi = false;
+        mostrarConfirmacion();
+      }
+
+      else if (boton == Boton::ABAJO) {
+        confirmarSi = true;
+        mostrarConfirmacion();
+      }
+
+      else if (boton == Boton::VOLVER) {
+        confirmarSi = false;
+        pantallaActual = MENU_PRINCIPAL;
+        mostrarMenu();
+      }
+
+      else if (boton == Boton::BOTON_OK) {
+
+        if (confirmarSi) {
+          iniciarOperacion();
+          pantallaActual = MAQUINA_ACTIVA;
+          mostrarMaquinaActiva();
+          Serial.println("Inicio simulado");
+        }
+
+        else {
+          pantallaActual = MENU_PRINCIPAL;
+          mostrarMenu();
+        }
+      }
+      break;
+
+    case MENU_SENSORES:
+
+      if (boton == Boton::ARRIBA && sensorActual > 0) {
+        sensorActual--;
+        mostrarSensor();
+      }
+
+      else if (
+        boton == Boton::ABAJO &&
+        sensorActual < TOTAL_SENSORES - 1
+      ) {
+        sensorActual++;
+        mostrarSensor();
+      }
+
+      else if (boton == Boton::VOLVER) {
+        pantallaActual = MENU_PRINCIPAL;
+        mostrarMenu();
+      }
+      break;
+
+    case OTRO_SUBMENU:
+
+      if (boton == Boton::VOLVER) {
+        pantallaActual = MENU_PRINCIPAL;
+        mostrarMenu();
+      }
+      break;
+
+    case MAQUINA_ACTIVA:
+
+      if (boton == Boton::VOLVER) {
+        detenerOperacion();
+        pantallaActual = MENU_PRINCIPAL;
+        mostrarMenu();
+        Serial.println("Simulacion finalizada");
+      }
+      break;
+  }
+}
+
+// ========================================
+// CONFIGURACION
+// ========================================
+
+void mostrarTiempoOperacion() {
+
+  unsigned long segundos = obtenerTiempoOperacion();
+
+  unsigned long horas = segundos / 3600;
+  unsigned long minutos = (segundos % 3600) / 60;
+  unsigned long seg = segundos % 60;
+
+  char tiempo[17];
+
+  snprintf(
+    tiempo,
+    sizeof(tiempo),
+    "%02lu:%02lu:%02lu",
+    horas,
+    minutos,
+    seg
+  );
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("TIEMPO OPERACION");
+
+  lcd.setCursor(0, 1);
+  lcd.print(tiempo);
+}
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(BTN_ARRIBA, INPUT_PULLUP);
+  pinMode(BTN_ABAJO, INPUT_PULLUP);
+  pinMode(BTN_OK, INPUT_PULLUP);
+  pinMode(BTN_VOLVER, INPUT_PULLUP);
+
+  lcd.begin(16, 2);
+
+  mostrarBienvenida();
+
+  mostrarMenu();
+
+  Serial.println("Sistema listo");
+}
+
+// ========================================
+// CICLO PRINCIPAL
+// ========================================
+
+void loop() {
+
+  Boton boton = leerBoton();
+
+  procesarMenu(boton);
+}
