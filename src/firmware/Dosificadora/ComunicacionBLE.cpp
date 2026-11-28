@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Comandos.h"
 #include "Motor.h"
+#include "Seguridad.h"
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -15,7 +16,7 @@
 
 // ======================================
 // DOSIFICADORA DE BOMBONES
-// Comunicacion Bluetooth BLE - V1.0
+// Comunicacion Bluetooth BLE - V1.3
 // ======================================
 
 static BLEServer* servidorBLE = nullptr;
@@ -23,19 +24,25 @@ static BLECharacteristic* caracteristicaTX = nullptr;
 
 static std::atomic<bool> conectado{false};
 static std::atomic<bool> desconexionPendiente{false};
+static std::atomic<bool> saturacionPendiente{false};
 static std::atomic<bool> reiniciarPublicidad{false};
 
 static std::atomic<uint32_t> sesionBLE{0};
 
 struct MensajeBLE {
-    char datos[65];
+
+    char datos[MAX_COMANDO + 1];
+
     uint32_t sesion;
 };
 
 static QueueHandle_t colaBLE = nullptr;
 
 static String bufferBLE = "";
+
 static bool recibiendoBLE = false;
+
+static uint32_t sesionProcesada = 0;
 
 // ======================================
 // EVENTOS DE CONEXION
@@ -44,15 +51,20 @@ static bool recibiendoBLE = false;
 class EventosServidor : public BLEServerCallbacks {
 
     void onConnect(BLEServer* servidor) override {
+
         sesionBLE.fetch_add(1);
+
         conectado.store(true);
     }
 
     void onDisconnect(BLEServer* servidor) override {
+
         conectado.store(false);
+
         sesionBLE.fetch_add(1);
 
         desconexionPendiente.store(true);
+
         reiniciarPublicidad.store(true);
     }
 };
@@ -65,13 +77,20 @@ class EventosRecepcion : public BLECharacteristicCallbacks {
 
     void onWrite(BLECharacteristic* caracteristica) override {
 
-        String dato = caracteristica->getValue();
+        uint32_t sesionActual = sesionBLE.load();
 
         if (!conectado.load() || colaBLE == nullptr) {
+
             return;
         }
 
-        if (dato.length() == 0 || dato.length() > 64) {
+        String dato = caracteristica->getValue();
+
+        if (
+            dato.length() == 0 ||
+            dato.length() > MAX_COMANDO
+        ) {
+
             return;
         }
 
@@ -82,11 +101,25 @@ class EventosRecepcion : public BLECharacteristicCallbacks {
             sizeof(mensaje.datos)
         );
 
-        mensaje.sesion = sesionBLE.load();
+        mensaje.sesion = sesionActual;
 
-        // Si se satura la cola, detener por seguridad.
+        // Verificar que la conexion siga vigente.
+
+        if (
+            !conectado.load() ||
+            sesionActual != sesionBLE.load() ||
+            desconexionPendiente.load() ||
+            saturacionPendiente.load()
+        ) {
+
+            return;
+        }
+
+        // Notificar saturacion al ciclo principal.
+
         if (xQueueSend(colaBLE, &mensaje, 0) != pdTRUE) {
-            desconexionPendiente.store(true);
+
+            saturacionPendiente.store(true);
         }
     }
 };
@@ -97,13 +130,17 @@ class EventosRecepcion : public BLECharacteristicCallbacks {
 
 bool inicializarBluetooth() {
 
-    colaBLE = xQueueCreate(10, sizeof(MensajeBLE));
+    colaBLE = xQueueCreate(
+        10,
+        sizeof(MensajeBLE)
+    );
 
     if (colaBLE == nullptr) {
+
         return false;
     }
 
-    bufferBLE.reserve(64);
+    bufferBLE.reserve(MAX_COMANDO);
 
     BLEDevice::init(NOMBRE_BLUETOOTH);
 
@@ -114,21 +151,31 @@ bool inicializarBluetooth() {
     );
 
     BLEService* servicio =
-        servidorBLE->createService(BLE_SERVICIO_UUID);
+        servidorBLE->createService(
+            BLE_SERVICIO_UUID
+        );
 
-    // TX: ESP32 hacia telefono
+    // TX: ESP32 hacia telefono.
+
     caracteristicaTX = servicio->createCharacteristic(
+
         BLE_TX_UUID,
+
         BLECharacteristic::PROPERTY_READ |
         BLECharacteristic::PROPERTY_NOTIFY
     );
 
-    caracteristicaTX->addDescriptor(new BLE2902());
+    caracteristicaTX->addDescriptor(
+        new BLE2902()
+    );
 
-    // RX: Telefono hacia ESP32
+    // RX: Telefono hacia ESP32.
+
     BLECharacteristic* caracteristicaRX =
         servicio->createCharacteristic(
+
             BLE_RX_UUID,
+
             BLECharacteristic::PROPERTY_WRITE
         );
 
@@ -141,14 +188,20 @@ bool inicializarBluetooth() {
     BLEAdvertising* publicidad =
         BLEDevice::getAdvertising();
 
-    publicidad->addServiceUUID(BLE_SERVICIO_UUID);
+    publicidad->addServiceUUID(
+        BLE_SERVICIO_UUID
+    );
+
     publicidad->setScanResponse(true);
 
     BLEDevice::startAdvertising();
 
     Serial.println("Bluetooth BLE inicializado");
+
     Serial.print("Dispositivo: ");
     Serial.println(NOMBRE_BLUETOOTH);
+
+    Serial.println("Autorizacion BLE: HABILITADA");
 
     return true;
 }
@@ -158,7 +211,89 @@ bool inicializarBluetooth() {
 // ======================================
 
 bool bluetoothConectado() {
+
     return conectado.load();
+}
+
+// ======================================
+// VALIDAR SESION
+// ======================================
+
+static bool sesionValida(uint32_t sesion) {
+
+    return conectado.load() &&
+           !desconexionPendiente.load() &&
+           !saturacionPendiente.load() &&
+           sesion == sesionBLE.load();
+}
+
+// ======================================
+// LIMPIAR RECEPCION
+// ======================================
+
+static void limpiarRecepcionBLE() {
+
+    bufferBLE = "";
+
+    recibiendoBLE = false;
+
+    if (colaBLE != nullptr) {
+
+        xQueueReset(colaBLE);
+    }
+}
+
+// ======================================
+// SUPERVISAR EVENTOS DE SEGURIDAD
+// ======================================
+
+static bool atenderEventosSeguridadBLE() {
+
+    bool desconexion =
+        desconexionPendiente.exchange(false);
+
+    bool saturacion =
+        saturacionPendiente.exchange(false);
+
+    uint32_t sesionActual = sesionBLE.load();
+
+    bool cambioSesion =
+        sesionActual != sesionProcesada;
+
+    if (desconexion || saturacion || cambioSesion) {
+
+        // Invalidar el permiso de la sesion anterior.
+        // No detener si otro canal tiene el control.
+
+        if (desconexion || cambioSesion) {
+
+            notificarDesconexion(
+                CanalControl::BLE
+            );
+        }
+
+        if (saturacion) {
+
+            if (tieneControl(CanalControl::BLE)) {
+
+                detenerPorSeguridad(
+                    MotivoDetencion::FALLO_SISTEMA
+                );
+            }
+
+            Serial.println("BLE: Cola saturada");
+        }
+
+        limpiarRecepcionBLE();
+
+        sesionProcesada = sesionActual;
+
+        Serial.println("BLE: Recepcion reiniciada");
+
+        return true;
+    }
+
+    return false;
 }
 
 // ======================================
@@ -167,22 +302,32 @@ bool bluetoothConectado() {
 
 void enviarBluetooth(const String& mensaje) {
 
-    if (!conectado.load() || caracteristicaTX == nullptr) {
+    uint32_t sesionActual = sesionBLE.load();
+
+    if (
+        !sesionValida(sesionActual) ||
+        caracteristicaTX == nullptr
+    ) {
+
         return;
     }
 
     String trama = mensaje + "\n";
 
     // Fragmentos compatibles con MTU BLE basico.
+
     for (size_t i = 0; i < trama.length(); i += 20) {
 
-        if (!conectado.load()) {
+        if (!sesionValida(sesionActual)) {
+
             break;
         }
 
-        String fragmento = trama.substring(i, i + 20);
+        String fragmento =
+            trama.substring(i, i + 20);
 
         caracteristicaTX->setValue(fragmento);
+
         caracteristicaTX->notify();
     }
 }
@@ -195,24 +340,16 @@ void actualizarBluetooth() {
 
     static bool conexionAnterior = false;
 
-    // Prioridad: detener ante desconexion o saturacion.
-    if (desconexionPendiente.exchange(false)) {
+    // Prioridad: atender eventos de seguridad.
 
-        detenerMotor();
+    atenderEventosSeguridadBLE();
 
-        bufferBLE = "";
-        recibiendoBLE = false;
-
-        if (colaBLE != nullptr) {
-            xQueueReset(colaBLE);
-        }
-
-        Serial.println("BLE: Motor detenido por seguridad");
-    }
+    // Reiniciar publicidad tras desconexion.
 
     if (reiniciarPublicidad.exchange(false)) {
 
         if (!conectado.load()) {
+
             BLEDevice::startAdvertising();
         }
     }
@@ -222,8 +359,11 @@ void actualizarBluetooth() {
     if (conexionActual != conexionAnterior) {
 
         if (conexionActual) {
+
             Serial.println("BLE: Telefono conectado");
+
         } else {
+
             Serial.println("BLE: Telefono desconectado");
         }
 
@@ -231,64 +371,135 @@ void actualizarBluetooth() {
     }
 
     if (!conexionActual || colaBLE == nullptr) {
+
         return;
     }
 
-    MensajeBLE mensaje;
+    MensajeBLE mensaje{};
 
     // Procesar un paquete por iteracion.
+
     if (xQueueReceive(colaBLE, &mensaje, 0) != pdTRUE) {
+
         return;
     }
 
-    // Descartar mensajes de conexiones anteriores.
-    if (mensaje.sesion != sesionBLE.load()) {
+    // Descartar mensajes de sesiones anteriores.
+
+    if (
+        !sesionValida(mensaje.sesion) ||
+        mensaje.sesion != sesionProcesada
+    ) {
+
         return;
     }
 
-    for (size_t i = 0; mensaje.datos[i] != '\0'; i++) {
+    // ==================================
+    // PROCESAMIENTO DE TRAMAS
+    // ==================================
 
-        if (!conectado.load() ||
-            desconexionPendiente.load() ||
-            mensaje.sesion != sesionBLE.load()) {
+    for (
+        size_t i = 0;
+        i < sizeof(mensaje.datos) &&
+        mensaje.datos[i] != '\0';
+        i++
+    ) {
+
+        if (!sesionValida(mensaje.sesion)) {
+
             break;
         }
 
         char caracter = mensaje.datos[i];
 
-        if (caracter == '?') {
+        // Inicio de trama.
+
+        if (caracter == INICIO_COMANDO) {
 
             bufferBLE = "";
+
             recibiendoBLE = true;
 
-        } else if (caracter == '*' && recibiendoBLE) {
+        // Fin de trama.
 
-            String respuesta = procesarComando(bufferBLE);
+        } else if (
+            caracter == FIN_COMANDO &&
+            recibiendoBLE
+        ) {
 
-            Serial.print("BLE RX: ");
-            Serial.println(bufferBLE);
+            if (!sesionValida(mensaje.sesion)) {
 
-            Serial.print("BLE TX: ");
-            Serial.println(respuesta);
+                break;
+            }
+
+            String comando = bufferBLE;
+
+            bufferBLE = "";
+
+            recibiendoBLE = false;
+
+            // Procesar mediante autorizacion BLE.
+
+            String respuesta = procesarComando(
+
+                comando,
+
+                CanalControl::BLE
+            );
+
+            // Comprobar si ocurrio una desconexion
+            // durante el procesamiento.
+
+            if (
+                !sesionValida(mensaje.sesion) ||
+                atenderEventosSeguridadBLE()
+            ) {
+
+                atenderEventosSeguridadBLE();
+
+                break;
+            }
+
+            // Evitar saturar el monitor serial
+            // con mensajes repetitivos de heartbeat.
+
+            String comandoNormalizado = comando;
+
+            comandoNormalizado.trim();
+
+            comandoNormalizado.toUpperCase();
+
+            if (comandoNormalizado != "HEARTBEAT") {
+
+                Serial.print("BLE RX: ");
+                Serial.println(comando);
+
+                Serial.print("BLE TX: ");
+                Serial.println(respuesta);
+            }
 
             enviarBluetooth(respuesta);
 
-            bufferBLE = "";
-            recibiendoBLE = false;
+            actualizarSeguridad();
 
         } else if (recibiendoBLE) {
 
-            if (bufferBLE.length() < 64) {
+            if (bufferBLE.length() < MAX_COMANDO) {
 
                 bufferBLE += caracter;
 
             } else {
 
                 bufferBLE = "";
+
                 recibiendoBLE = false;
 
-                enviarBluetooth("ERROR:COMANDO_LARGO");
+                enviarBluetooth(
+                    "ERROR:COMANDO_LARGO"
+                );
             }
         }
     }
+
+    atenderEventosSeguridadBLE();
 }

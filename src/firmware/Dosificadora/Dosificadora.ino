@@ -3,23 +3,27 @@
 #include "Motor.h"
 #include "Comandos.h"
 #include "ComunicacionBLE.h"
+#include "ComunicacionWiFi.h"
+#include "Seguridad.h"
 
 // ======================================
 // DOSIFICADORA DE BOMBONES
-// Firmware V1.2
-// ESP32 - Bluetooth BLE
+// FIRMWARE V1.3
 // ======================================
 
 static bool sistemaListo = false;
 static bool bleListo = false;
+static bool wifiListo = false;
 
 // ======================================
-// CONFIGURACION INICIAL
+// INICIALIZACION DEL SISTEMA
 // ======================================
 
 void setup() {
 
     Serial.begin(SERIAL_BAUDIOS);
+
+    // Inicializar el motor en estado detenido.
 
     sistemaListo = inicializarMotor();
 
@@ -27,11 +31,15 @@ void setup() {
 
     Serial.println();
     Serial.println("================================");
-    Serial.println(" DOSIFICADORA DE BOMBONES V1.2");
+    Serial.println(" DOSIFICADORA DE BOMBONES V1.3");
     Serial.println("================================");
 
     Serial.print("Microcontrolador: ");
     Serial.println(ESP.getChipModel());
+
+    // ==================================
+    // VERIFICACION DEL MOTOR
+    // ==================================
 
     if (!sistemaListo) {
 
@@ -45,12 +53,37 @@ void setup() {
     Serial.println("Motor: OK");
     Serial.println("PWM: OK");
 
-    // Comunicacion serial
+    // ==================================
+    // MODULO DE SEGURIDAD
+    // ==================================
+
+    inicializarSeguridad();
+
+    if (!seguridadInicializada()) {
+
+        detenerMotor();
+
+        sistemaListo = false;
+
+        Serial.println("ERROR: Modulo de seguridad");
+
+        return;
+    }
+
+    Serial.println("Seguridad: OK");
+
+    // ==================================
+    // COMUNICACION SERIAL
+    // ==================================
+
     inicializarComandos();
 
     Serial.println("Comunicacion serial: OK");
 
-    // Comunicacion Bluetooth
+    // ==================================
+    // BLUETOOTH BLE
+    // ==================================
+
     bleListo = inicializarBluetooth();
 
     if (bleListo) {
@@ -59,14 +92,105 @@ void setup() {
 
     } else {
 
-        detenerMotor();
-
-        Serial.println("ERROR: Bluetooth BLE");
+        detenerPorSeguridad(
+            MotivoDetencion::FALLO_SISTEMA
+        );
 
         sistemaListo = false;
 
+        Serial.println("ERROR: Bluetooth BLE");
+
         return;
     }
+
+    // ==================================
+    // COMUNICACION WIFI
+    // ==================================
+
+    wifiListo = inicializarWiFi();
+
+    if (wifiListo) {
+
+        Serial.println("Comunicacion WiFi: OK");
+
+    } else {
+
+        detenerPorSeguridad(
+            MotivoDetencion::FALLO_SISTEMA
+        );
+
+        sistemaListo = false;
+
+        Serial.println("ERROR: Comunicacion WiFi");
+
+        return;
+    }
+
+    // ==================================
+    // DIAGNOSTICO DE MEMORIA
+    // ==================================
+
+    Serial.println("--------------------------------");
+    Serial.println("DIAGNOSTICO DE MEMORIA");
+    Serial.println("--------------------------------");
+
+    Serial.print("Memoria Flash total: ");
+    Serial.print(ESP.getFlashChipSize());
+    Serial.println(" bytes");
+
+    Serial.print("RAM libre: ");
+    Serial.print(ESP.getFreeHeap());
+    Serial.println(" bytes");
+
+    Serial.print("RAM libre minima: ");
+    Serial.print(ESP.getMinFreeHeap());
+    Serial.println(" bytes");
+
+    // ==================================
+    // DIAGNOSTICO DE COMUNICACIONES
+    // ==================================
+
+    Serial.println("--------------------------------");
+
+    Serial.print("Direccion IP: ");
+    Serial.println(obtenerIPWiFi());
+
+    Serial.print("Clientes WiFi conectados: ");
+    Serial.println(obtenerClientesWiFi());
+
+    // ==================================
+    // DIAGNOSTICO DE SEGURIDAD
+    // ==================================
+
+    Serial.println("--------------------------------");
+    Serial.println("DIAGNOSTICO DE SEGURIDAD");
+    Serial.println("--------------------------------");
+
+    Serial.print("Modulo de seguridad: ");
+
+    Serial.println(
+        seguridadInicializada()
+        ? "ACTIVO"
+        : "INACTIVO"
+    );
+
+    Serial.print("Propietario de control: ");
+    Serial.println(obtenerPropietarioTexto());
+
+    Serial.print("Heartbeat: ");
+
+    Serial.println(
+        heartbeatVigente()
+        ? "VIGENTE"
+        : "NO VIGENTE"
+    );
+
+    Serial.print("Motivo de detencion: ");
+    Serial.println(obtenerMotivoDetencionTexto());
+
+    Serial.print("Timeout Heartbeat: ");
+    Serial.print(HEARTBEAT_TIMEOUT_MS);
+    Serial.println(" ms");
 
     Serial.println("--------------------------------");
     Serial.println("Sistema listo");
@@ -89,22 +213,46 @@ void loop() {
         return;
     }
 
-    // Procesamiento de comandos seriales
+    // Supervisar seguridad.
+
+    actualizarSeguridad();
+
+    // Procesar comunicacion serial.
+
     actualizarComandosSerial();
 
-    // Procesamiento de comandos Bluetooth
+    actualizarSeguridad();
+
+    // Procesar Bluetooth.
+
     if (bleListo) {
 
         actualizarBluetooth();
     }
 
-    // Control automatico del motor
+    actualizarSeguridad();
+
+    // Actualizar el motor.
+
     actualizarMotor();
 
-    // FUTURAS IMPLEMENTACIONES:
-    // actualizarPantalla();
-    // actualizarSensores();
-    // actualizarEncoder();
+    // Procesar comunicacion WiFi.
+
+    if (wifiListo) {
+
+        actualizarWiFi();
+    }
+
+    actualizarSeguridad();
+
+    // ==================================
+    // FUTURAS IMPLEMENTACIONES
+    // ==================================
+
+    // Actualizar pantalla LCD.
+    // Actualizar sensores.
+    // Actualizar encoder.
+    // Supervisar paro de emergencia.
 
     delay(1);
 }

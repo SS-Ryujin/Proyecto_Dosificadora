@@ -1,0 +1,19 @@
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Archivos de compilacion
+build/
+*.bin
+*.elf
+*.map
+
+# Credenciales locales
+.env
+.env.local
+CredencialesWiFi.h

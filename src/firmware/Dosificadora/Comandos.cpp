@@ -1,86 +1,164 @@
 
 #include "Comandos.h"
+#include "Motor.h"
+#include "Seguridad.h"
 
 // ======================================
-// DOSIFICADORA DE BOMBONES
-// Procesamiento de comandos - V1.2
+// VARIABLES INTERNAS
 // ======================================
 
 static String bufferComando = "";
+
 static bool recibiendo = false;
 
 // ======================================
-// GENERACION DEL ESTADO
+// VALIDACION DE NUMEROS
+// ======================================
+
+static bool esNumeroValido(
+    const String& texto,
+    size_t maxDigitos
+) {
+
+    if (
+        texto.length() == 0 ||
+        texto.length() > maxDigitos
+    ) {
+        return false;
+    }
+
+    for (size_t i = 0; i < texto.length(); i++) {
+
+        if (texto[i] < '0' || texto[i] > '9') {
+
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// ======================================
+// ESTADO DEL MOTOR
 // ======================================
 
 String generarEstado() {
 
-    String respuesta = "STATUS";
+    String estado;
 
-    respuesta += ";ACTIVO=";
-    respuesta += sistemaMotorActivo() ? "SI" : "NO";
+    estado.reserve(192);
 
-    respuesta += ";ESTADO=";
-    respuesta += obtenerEstadoTexto();
+    estado = "STATUS";
 
-    respuesta += ";PWM=";
-    respuesta += String(obtenerVelocidad());
+    estado += ";ACTIVO=";
+    estado += sistemaMotorActivo() ? "SI" : "NO";
 
-    respuesta += ";DIR=";
-    respuesta += obtenerSentidoTexto();
+    estado += ";ESTADO=";
+    estado += obtenerEstadoTexto();
 
-    respuesta += ";MODO=";
-    respuesta += obtenerModoTexto();
+    estado += ";PWM=";
+    estado += String(obtenerVelocidad());
 
-    respuesta += ";GIRO=";
-    respuesta += String(obtenerTiempoGiro());
+    estado += ";DIR=";
+    estado += obtenerSentidoTexto();
 
-    respuesta += ";PAUSA=";
-    respuesta += String(obtenerTiempoPausa());
+    estado += ";MODO=";
+    estado += obtenerModoTexto();
 
-    return respuesta;
+    estado += ";GIRO=";
+    estado += String(obtenerTiempoGiro());
+
+    estado += ";PAUSA=";
+    estado += String(obtenerTiempoPausa());
+
+    return estado;
+}
+
+// ======================================
+// ESTADO DE SEGURIDAD
+// ======================================
+
+String generarEstadoSeguridad() {
+
+    String estado;
+
+    estado.reserve(192);
+
+    estado = "SEGURIDAD";
+
+    estado += ";MODULO=";
+    estado += seguridadInicializada()
+        ? "ACTIVO"
+        : "INACTIVO";
+
+    estado += ";PROPIETARIO=";
+    estado += obtenerPropietarioTexto();
+
+    estado += ";HEARTBEAT=";
+    estado += heartbeatVigente()
+        ? "VIGENTE"
+        : "NO_VIGENTE";
+
+    estado += ";SIN_HEARTBEAT_MS=";
+    estado += String(obtenerTiempoSinHeartbeat());
+
+    estado += ";TIMEOUT_MS=";
+    estado += String(HEARTBEAT_TIMEOUT_MS);
+
+    estado += ";MOTIVO=";
+    estado += obtenerMotivoDetencionTexto();
+
+    return estado;
 }
 
 // ======================================
 // MENU DE COMANDOS
 // ======================================
 
+static const char MENU_COMANDOS[] PROGMEM =
+
+    "\n================================\n"
+    "   DOSIFICADORA DE BOMBONES\n"
+    "         VERSION 1.3\n"
+    "================================\n"
+    "CONTROL Y SEGURIDAD\n"
+    "?CONTROL:TAKE*     Solicitar control\n"
+    "?CONTROL:RELEASE*  Liberar control\n"
+    "?CONTROL:STATUS*   Consultar propietario\n"
+    "?HEARTBEAT*        Renovar permiso\n"
+    "?SEGURIDAD*        Diagnostico\n"
+    "--------------------------------\n"
+    "CONTROL DEL MOTOR\n"
+    "?START*            Arrancar motor\n"
+    "?STOP*             Detener motor\n"
+    "?PWM:80*           Establecer PWM\n"
+    "?PWM:UP*           Aumentar PWM\n"
+    "?PWM:DOWN*         Disminuir PWM\n"
+    "?DIR:CW*           Giro horario\n"
+    "?DIR:CCW*          Giro antihorario\n"
+    "--------------------------------\n"
+    "MODOS DE OPERACION\n"
+    "?MODO:CICLICO*     Modo ciclico\n"
+    "?MODO:CONTINUO*    Modo continuo\n"
+    "--------------------------------\n"
+    "TEMPORIZADORES\n"
+    "?GIRO:10000*       Tiempo de giro\n"
+    "?GIRO:UP*          Aumentar giro\n"
+    "?GIRO:DOWN*        Disminuir giro\n"
+    "?PAUSA:3000*       Tiempo de pausa\n"
+    "?PAUSA:UP*         Aumentar pausa\n"
+    "?PAUSA:DOWN*       Disminuir pausa\n"
+    "--------------------------------\n"
+    "?STATUS*           Consultar estado\n"
+    "?MENU*             Consultar comandos\n"
+    "================================\n"
+    "Tiempos expresados en milisegundos\n"
+    "Heartbeat requerido para operar\n"
+    "================================\n";
+
 void mostrarMenuComandos() {
 
-    Serial.println();
-    Serial.println("================================");
-    Serial.println("   DOSIFICADORA DE BOMBONES");
-    Serial.println("         VERSION 1.2");
-    Serial.println("================================");
-
-    Serial.println("?START*          Arrancar motor");
-    Serial.println("?STOP*           Detener motor");
-
-    Serial.println("?PWM:80*         Establecer PWM");
-    Serial.println("?PWM:UP*         Aumentar PWM");
-    Serial.println("?PWM:DOWN*       Disminuir PWM");
-
-    Serial.println("?DIR:CW*         Giro horario");
-    Serial.println("?DIR:CCW*        Giro antihorario");
-
-    Serial.println("?MODO:CICLICO*   Modo ciclico");
-    Serial.println("?MODO:CONTINUO*  Modo continuo");
-
-    Serial.println("?GIRO:10000*     Tiempo de giro");
-    Serial.println("?GIRO:UP*        Aumentar giro");
-    Serial.println("?GIRO:DOWN*      Disminuir giro");
-
-    Serial.println("?PAUSA:3000*     Tiempo de pausa");
-    Serial.println("?PAUSA:UP*       Aumentar pausa");
-    Serial.println("?PAUSA:DOWN*     Disminuir pausa");
-
-    Serial.println("?STATUS*         Consultar estado");
-    Serial.println("?MENU*           Consultar comandos");
-
-    Serial.println("================================");
-    Serial.println("Tiempos expresados en milisegundos");
-    Serial.println("Sistema listo para recibir datos");
-    Serial.println();
+    Serial.print(MENU_COMANDOS);
 }
 
 // ======================================
@@ -92,55 +170,153 @@ void inicializarComandos() {
     bufferComando.reserve(MAX_COMANDO);
 
     bufferComando = "";
+
     recibiendo = false;
 
     mostrarMenuComandos();
 }
 
 // ======================================
-// VALIDACION NUMERICA
-// ======================================
-
-static bool esNumero(
-    const String& valor,
-    size_t maxDigitos
-) {
-
-    if (valor.length() == 0 ||
-        valor.length() > maxDigitos) {
-        return false;
-    }
-
-    for (size_t i = 0; i < valor.length(); i++) {
-
-        if (valor[i] < '0' || valor[i] > '9') {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-// ======================================
 // PROCESAMIENTO DE COMANDOS
 // ======================================
 
-String procesarComando(const String& comando) {
+String procesarComando(
+    const String& comando,
+    CanalControl canal
+) {
 
     String cmd = comando;
 
     cmd.trim();
+
     cmd.toUpperCase();
 
+    if (cmd.length() == 0) {
+
+        return "ERROR:COMANDO_VACIO";
+    }
+
+    if (cmd.length() > MAX_COMANDO) {
+
+        return "ERROR:COMANDO_DEMASIADO_LARGO";
+    }
+
     // ==================================
-    // ARRANQUE
+    // PARO MANUAL
+    // Disponible desde cualquier canal.
+    // ==================================
+
+    if (cmd == "STOP") {
+
+        detenerPorSeguridad(
+            MotivoDetencion::PARO_MANUAL
+        );
+
+        return "OK:STOP;" + generarEstado();
+    }
+
+    // Supervisar permisos antes de
+    // procesar cualquier otra orden.
+
+    actualizarSeguridad();
+
+    // ==================================
+    // CONSULTAS PUBLICAS
+    // ==================================
+
+    if (cmd == "STATUS") {
+
+        return generarEstado();
+    }
+
+    if (cmd == "SEGURIDAD") {
+
+        return generarEstadoSeguridad();
+    }
+
+    if (cmd == "CONTROL:STATUS") {
+
+        return generarEstadoSeguridad();
+    }
+
+    if (cmd == "MENU") {
+
+        return String(MENU_COMANDOS);
+    }
+
+    // ==================================
+    // VALIDACION DEL CANAL
+    // ==================================
+
+    if (canal == CanalControl::NINGUNO) {
+
+        return "ERROR:CANAL_INVALIDO";
+    }
+
+    if (!seguridadInicializada()) {
+
+        return "ERROR:SEGURIDAD_NO_INICIALIZADA";
+    }
+
+    // ==================================
+    // SOLICITAR CONTROL
+    // ==================================
+
+    if (cmd == "CONTROL:TAKE") {
+
+        if (!solicitarControl(canal)) {
+
+            return "ERROR:CONTROL_NO_DISPONIBLE";
+        }
+
+        return "OK:CONTROL_TAKE;" +
+               generarEstadoSeguridad();
+    }
+
+    // ==================================
+    // LIBERAR CONTROL
+    // ==================================
+
+    if (cmd == "CONTROL:RELEASE") {
+
+        if (!liberarControl(canal)) {
+
+            return "ERROR:SIN_AUTORIZACION";
+        }
+
+        return "OK:CONTROL_RELEASE;" +
+               generarEstadoSeguridad();
+    }
+
+    // ==================================
+    // HEARTBEAT
+    // ==================================
+
+    if (cmd == "HEARTBEAT") {
+
+        if (!registrarHeartbeat(canal)) {
+
+            return "ERROR:HEARTBEAT_RECHAZADO";
+        }
+
+        return "OK:HEARTBEAT";
+    }
+
+    // ==================================
+    // ARRANQUE DEL MOTOR
     // ==================================
 
     if (cmd == "START") {
 
+        if (!autorizarArranque(canal)) {
+
+            return "ERROR:ARRANQUE_NO_AUTORIZADO";
+        }
+
         arrancarMotor();
 
         if (!sistemaMotorActivo()) {
+
             return "ERROR:ARRANQUE_RECHAZADO";
         }
 
@@ -148,14 +324,46 @@ String procesarComando(const String& comando) {
     }
 
     // ==================================
-    // DETENCION
+    // IDENTIFICAR COMANDOS DE CONFIGURACION
     // ==================================
 
-    if (cmd == "STOP") {
+    bool esConfiguracion =
 
-        detenerMotor();
+        cmd.startsWith("PWM:") ||
+        cmd.startsWith("DIR:") ||
+        cmd.startsWith("MODO:") ||
+        cmd.startsWith("GIRO:") ||
+        cmd.startsWith("PAUSA:");
 
-        return "OK:STOP;" + generarEstado();
+    if (!esConfiguracion) {
+
+        return "ERROR:COMANDO_DESCONOCIDO";
+    }
+
+    // ==================================
+    // VERIFICAR AUTORIZACION
+    // ==================================
+
+    if (!tieneControl(canal)) {
+
+        return "ERROR:SIN_AUTORIZACION";
+    }
+
+    if (!heartbeatVigente()) {
+
+        actualizarSeguridad();
+
+        return "ERROR:HEARTBEAT_EXPIRADO";
+    }
+
+    if (sistemaMotorActivo()) {
+
+        return "ERROR:SISTEMA_ACTIVO";
+    }
+
+    if (!autorizarConfiguracion(canal)) {
+
+        return "ERROR:CONFIGURACION_NO_AUTORIZADA";
     }
 
     // ==================================
@@ -180,14 +388,14 @@ String procesarComando(const String& comando) {
 
         String valor = cmd.substring(4);
 
-        if (!esNumero(valor, 3)) {
+        if (!esNumeroValido(valor, 3)) {
+
             return "ERROR:VALOR_INVALIDO";
         }
 
         int porcentaje = valor.toInt();
 
-        if (porcentaje < PWM_MINIMO ||
-            porcentaje > PWM_MAXIMO) {
+        if (porcentaje < 0 || porcentaje > 100) {
 
             return "ERROR:PWM_FUERA_DE_RANGO";
         }
@@ -198,46 +406,57 @@ String procesarComando(const String& comando) {
     }
 
     // ==================================
-    // DIRECCION DEL MOTOR
+    // SENTIDO DE GIRO
     // ==================================
 
     if (cmd == "DIR:CW") {
 
-        establecerSentido(SentidoMotor::HORARIO);
+        establecerSentido(
+            SentidoMotor::HORARIO
+        );
 
         return "OK:DIR;" + generarEstado();
     }
 
     if (cmd == "DIR:CCW") {
 
-        establecerSentido(SentidoMotor::ANTIHORARIO);
+        establecerSentido(
+            SentidoMotor::ANTIHORARIO
+        );
 
         return "OK:DIR;" + generarEstado();
     }
 
+    if (cmd.startsWith("DIR:")) {
+
+        return "ERROR:DIRECCION_INVALIDA";
+    }
+
     // ==================================
-    // MODOS DE FUNCIONAMIENTO
+    // MODO DE OPERACION
     // ==================================
+
+    if (cmd == "MODO:CICLICO") {
+
+        if (!establecerModo(ModoMotor::CICLICO)) {
+
+            return "ERROR:MODO_RECHAZADO";
+        }
+
+        return "OK:MODO;" + generarEstado();
+    }
+
+    if (cmd == "MODO:CONTINUO") {
+
+        if (!establecerModo(ModoMotor::CONTINUO)) {
+
+            return "ERROR:MODO_RECHAZADO";
+        }
+
+        return "OK:MODO;" + generarEstado();
+    }
 
     if (cmd.startsWith("MODO:")) {
-
-        if (sistemaMotorActivo()) {
-            return "ERROR:SISTEMA_ACTIVO";
-        }
-
-        if (cmd == "MODO:CICLICO") {
-
-            establecerModo(ModoMotor::CICLICO);
-
-            return "OK:MODO;" + generarEstado();
-        }
-
-        if (cmd == "MODO:CONTINUO") {
-
-            establecerModo(ModoMotor::CONTINUO);
-
-            return "OK:MODO;" + generarEstado();
-        }
 
         return "ERROR:MODO_INVALIDO";
     }
@@ -246,37 +465,51 @@ String procesarComando(const String& comando) {
     // TIEMPO DE GIRO
     // ==================================
 
+    if (cmd == "GIRO:UP") {
+
+        if (!aumentarTiempoGiro()) {
+
+            return "ERROR:GIRO_FUERA_DE_RANGO";
+        }
+
+        return "OK:GIRO;" + generarEstado();
+    }
+
+    if (cmd == "GIRO:DOWN") {
+
+        if (!disminuirTiempoGiro()) {
+
+            return "ERROR:GIRO_FUERA_DE_RANGO";
+        }
+
+        return "OK:GIRO;" + generarEstado();
+    }
+
     if (cmd.startsWith("GIRO:")) {
 
-        if (sistemaMotorActivo()) {
-            return "ERROR:SISTEMA_ACTIVO";
+        String valor = cmd.substring(5);
+
+        if (!esNumeroValido(valor, 6)) {
+
+            return "ERROR:VALOR_INVALIDO";
         }
 
-        bool resultado = false;
+        unsigned long tiempo =
+            static_cast<unsigned long>(
+                valor.toInt()
+            );
 
-        if (cmd == "GIRO:UP") {
+        if (
+            tiempo < GIRO_MINIMO ||
+            tiempo > GIRO_MAXIMO
+        ) {
 
-            resultado = aumentarTiempoGiro();
-
-        } else if (cmd == "GIRO:DOWN") {
-
-            resultado = disminuirTiempoGiro();
-
-        } else {
-
-            String valor = cmd.substring(5);
-
-            if (!esNumero(valor, 6)) {
-                return "ERROR:VALOR_INVALIDO";
-            }
-
-            unsigned long tiempo = valor.toInt();
-
-            resultado = establecerTiempoGiro(tiempo);
-        }
-
-        if (!resultado) {
             return "ERROR:GIRO_FUERA_DE_RANGO";
+        }
+
+        if (!establecerTiempoGiro(tiempo)) {
+
+            return "ERROR:GIRO_RECHAZADO";
         }
 
         return "OK:GIRO;" + generarEstado();
@@ -286,115 +519,126 @@ String procesarComando(const String& comando) {
     // TIEMPO DE PAUSA
     // ==================================
 
-    if (cmd.startsWith("PAUSA:")) {
+    if (cmd == "PAUSA:UP") {
 
-        if (sistemaMotorActivo()) {
-            return "ERROR:SISTEMA_ACTIVO";
-        }
+        if (!aumentarTiempoPausa()) {
 
-        bool resultado = false;
-
-        if (cmd == "PAUSA:UP") {
-
-            resultado = aumentarTiempoPausa();
-
-        } else if (cmd == "PAUSA:DOWN") {
-
-            resultado = disminuirTiempoPausa();
-
-        } else {
-
-            String valor = cmd.substring(6);
-
-            if (!esNumero(valor, 6)) {
-                return "ERROR:VALOR_INVALIDO";
-            }
-
-            unsigned long tiempo = valor.toInt();
-
-            resultado = establecerTiempoPausa(tiempo);
-        }
-
-        if (!resultado) {
             return "ERROR:PAUSA_FUERA_DE_RANGO";
         }
 
         return "OK:PAUSA;" + generarEstado();
     }
 
-    // ==================================
-    // CONSULTA DE ESTADO
-    // ==================================
+    if (cmd == "PAUSA:DOWN") {
 
-    if (cmd == "STATUS") {
+        if (!disminuirTiempoPausa()) {
 
-        return generarEstado();
+            return "ERROR:PAUSA_FUERA_DE_RANGO";
+        }
+
+        return "OK:PAUSA;" + generarEstado();
     }
 
-    // ==================================
-    // CONSULTA DE COMANDOS
-    // ==================================
+    if (cmd.startsWith("PAUSA:")) {
 
-    if (cmd == "MENU") {
+        String valor = cmd.substring(6);
 
-        return String("COMANDOS:") +
-            "START,STOP," +
-            "PWM:0-100,PWM:UP,PWM:DOWN," +
-            "DIR:CW,DIR:CCW," +
-            "MODO:CICLICO,MODO:CONTINUO," +
-            "GIRO:1000-600000,GIRO:UP,GIRO:DOWN," +
-            "PAUSA:1000-600000,PAUSA:UP,PAUSA:DOWN," +
-            "STATUS,MENU";
+        if (!esNumeroValido(valor, 6)) {
+
+            return "ERROR:VALOR_INVALIDO";
+        }
+
+        unsigned long tiempo =
+            static_cast<unsigned long>(
+                valor.toInt()
+            );
+
+        if (
+            tiempo < PAUSA_MINIMA ||
+            tiempo > PAUSA_MAXIMA
+        ) {
+
+            return "ERROR:PAUSA_FUERA_DE_RANGO";
+        }
+
+        if (!establecerTiempoPausa(tiempo)) {
+
+            return "ERROR:PAUSA_RECHAZADA";
+        }
+
+        return "OK:PAUSA;" + generarEstado();
     }
 
     return "ERROR:COMANDO_DESCONOCIDO";
 }
 
 // ======================================
-// RECEPCION POR PUERTO SERIAL
+// COMUNICACION SERIAL USB
 // ======================================
 
 void actualizarComandosSerial() {
 
-    size_t procesados = 0;
+    size_t bytesProcesados = 0;
 
-    while (Serial.available() > 0 &&
-           procesados < 64) {
+    while (
+        Serial.available() > 0 &&
+        bytesProcesados < MAX_COMANDO
+    ) {
 
-        char caracter = Serial.read();
+        char caracter =
+            static_cast<char>(Serial.read());
 
-        procesados++;
+        bytesProcesados++;
+
+        // Inicio de una nueva trama.
 
         if (caracter == INICIO_COMANDO) {
 
             bufferComando = "";
+
             recibiendo = true;
 
-        } else if (
-            caracter == FIN_COMANDO && recibiendo
-        ) {
+            continue;
+        }
 
-            String respuesta =
-                procesarComando(bufferComando);
+        if (!recibiendo) {
+
+            continue;
+        }
+
+        // Fin de la trama.
+
+        if (caracter == FIN_COMANDO) {
+
+            recibiendo = false;
+
+            String respuesta = procesarComando(
+                bufferComando,
+                CanalControl::USB
+            );
 
             Serial.println(respuesta);
 
             bufferComando = "";
+
+            continue;
+        }
+
+        // Proteccion contra desbordamiento.
+
+        if (bufferComando.length() >= MAX_COMANDO) {
+
+            bufferComando = "";
+
             recibiendo = false;
 
-        } else if (recibiendo) {
+            Serial.println(
+                "ERROR:COMANDO_DEMASIADO_LARGO"
+            );
 
-            if (bufferComando.length() < MAX_COMANDO) {
-
-                bufferComando += caracter;
-
-            } else {
-
-                bufferComando = "";
-                recibiendo = false;
-
-                Serial.println("ERROR:COMANDO_LARGO");
-            }
+            continue;
         }
+
+        bufferComando += caracter;
     }
 }

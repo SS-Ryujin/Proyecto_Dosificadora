@@ -4,32 +4,50 @@
 
 #include <Arduino.h>
 #include "Motor.h"
+#include "Seguridad.h"
 
 // ======================================
-// DOSIFICADORA DE BOMBONES
-// Protocolo de comunicacion - Version 1.0
+// CONFIGURACION DEL PROTOCOLO
 // ======================================
 
-// Delimitadores del protocolo
 constexpr char INICIO_COMANDO = '?';
 constexpr char FIN_COMANDO = '*';
 
-// Longitud maxima del comando
 constexpr size_t MAX_COMANDO = 64;
 
-// Inicializacion
+// ======================================
+// INICIALIZACION
+// ======================================
+
 void inicializarComandos();
 
-// Recepcion de datos por puerto serial
+// ======================================
+// COMUNICACION SERIAL
+// ======================================
+
 void actualizarComandosSerial();
 
-// Procesamiento de instrucciones
-String procesarComando(const String& comando);
+// ======================================
+// PROCESAMIENTO DE COMANDOS
+// ======================================
 
-// Consulta de informacion
+String procesarComando(
+    const String& comando,
+    CanalControl canal
+);
+
+// ======================================
+// GENERACION DE RESPUESTAS
+// ======================================
+
 String generarEstado();
 
-// Menu de instrucciones
+String generarEstadoSeguridad();
+
+// ======================================
+// MENU DE COMANDOS
+// ======================================
+
 void mostrarMenuComandos();
 
 #endif
