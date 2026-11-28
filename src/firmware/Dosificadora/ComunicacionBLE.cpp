@@ -1,4 +1,4 @@
-
+﻿
 #include "ComunicacionBLE.h"
 #include "Config.h"
 #include "Comandos.h"
@@ -29,6 +29,9 @@ static std::atomic<bool> reiniciarPublicidad{false};
 
 static std::atomic<uint32_t> sesionBLE{0};
 
+// Diagnostico temporal BLE.
+static std::atomic<uint32_t> tDesconexionBLE{0};
+
 struct MensajeBLE {
 
     char datos[MAX_COMANDO + 1];
@@ -58,6 +61,8 @@ class EventosServidor : public BLEServerCallbacks {
     }
 
     void onDisconnect(BLEServer* servidor) override {
+
+        tDesconexionBLE.store(millis());
 
         conectado.store(false);
 
@@ -267,9 +272,37 @@ static bool atenderEventosSeguridadBLE() {
 
         if (desconexion || cambioSesion) {
 
+            const uint32_t tProcesamientoBLE = millis();
+
+            const uint32_t tEventoBLE =
+                tDesconexionBLE.load();
+
             notificarDesconexion(
                 CanalControl::BLE
             );
+
+            if (desconexion) {
+
+                Serial.println("----- DIAGNOSTICO BLE -----");
+
+                Serial.print("T_DESCONEXION_BLE_MS: ");
+                Serial.println(tEventoBLE);
+
+                Serial.print("T_PROCESAMIENTO_BLE_MS: ");
+                Serial.println(tProcesamientoBLE);
+
+                Serial.print("LATENCIA_PROCESAMIENTO_BLE_MS: ");
+                Serial.println(
+                    tProcesamientoBLE - tEventoBLE
+                );
+
+                Serial.print("MOTIVO_ACTUAL: ");
+                Serial.println(
+                    obtenerMotivoDetencionTexto()
+                );
+
+                Serial.println("---------------------------");
+            }
         }
 
         if (saturacion) {
@@ -503,3 +536,4 @@ void actualizarBluetooth() {
 
     atenderEventosSeguridadBLE();
 }
+

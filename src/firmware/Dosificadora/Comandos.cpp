@@ -130,7 +130,8 @@ static const char MENU_COMANDOS[] PROGMEM =
     "--------------------------------\n"
     "CONTROL DEL MOTOR\n"
     "?START*            Arrancar motor\n"
-    "?STOP*             Detener motor\n"
+    "?STOP*             Paro general y revocar control\n"
+    "?HALT*             Detener conservando control\n"
     "?PWM:80*           Establecer PWM\n"
     "?PWM:UP*           Aumentar PWM\n"
     "?PWM:DOWN*         Disminuir PWM\n"
@@ -305,6 +306,17 @@ String procesarComando(
     // ==================================
     // ARRANQUE DEL MOTOR
     // ==================================
+
+    // Paro operativo: conserva el permiso, no renueva heartbeat.
+    if (cmd == "HALT") {
+        if (!tieneControl(canal)) return "ERROR:SIN_AUTORIZACION";
+        if (!heartbeatVigente()) {
+            actualizarSeguridad();
+            return "ERROR:HEARTBEAT_EXPIRADO";
+        }
+        detenerMotor();
+        return "OK:HALT;" + generarEstado();
+    }
 
     if (cmd == "START") {
 

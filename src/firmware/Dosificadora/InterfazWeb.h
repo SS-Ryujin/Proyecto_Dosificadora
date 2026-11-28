@@ -353,8 +353,7 @@ footer {
     </header>
 
     <div class="aviso">
-        MODO MONITOREO<br>
-        Control remoto deshabilitado.
+        PROTOTIPO DE CONTROL — PRUEBAS SIN 12 V<br><span id="permiso">Sin control</span><br><button id="tomar" disabled>Solicitar control</button> <button id="liberar" disabled>Liberar control</button><br><span id="mensaje"></span>
     </div>
 
     <!-- NAVEGACION -->
@@ -619,7 +618,7 @@ footer {
 
             <div class="dato">
                 <span>Heartbeat de seguridad</span>
-                <span class="pendiente">Pendiente</span>
+                <span id="diagHB">--</span>
             </div>
 
         </div>
@@ -826,7 +825,7 @@ function mostrarEstado(datos) {
 
     escribir("valorPWM", datos.pwm + "%");
 
-    elemento("pwm").value = datos.pwm;
+    if (!editandoPWM) elemento("pwm").value = datos.pwm;
 
     // Direccion
 
@@ -1021,96 +1020,75 @@ function mostrarDesconexion() {
 // CICLO DE MONITOREO
 // ======================================
 
-async function cicloMonitoreo() {
-
-    try {
-
-        // Consultar estado del motor
-
-        const estado = await consultarAPI(
-            "/api/status"
-        );
-
-        mostrarEstado(estado);
-
-        // Consultar diagnostico cada 5 segundos
-
-        const ahora = Date.now();
-
-        if (
-            ahora - ultimaConsultaDiagnostico
-            >= INTERVALO_DIAGNOSTICO
-        ) {
-
-            ultimaConsultaDiagnostico = ahora;
-
-            try {
-
-                const diagnostico =
-                    await consultarAPI(
-                        "/api/diagnostico"
-                    );
-
-                mostrarDiagnostico(diagnostico);
-
-            } catch (error) {
-
-                limpiarDiagnostico();
-
-                console.error(
-                    "Error de diagnóstico:",
-                    error
-                );
-            }
-        }
-
-    } catch (error) {
-
-        console.error(
-            "Error de comunicación:",
-            error
-        );
-
-        mostrarDesconexion();
-
-    } finally {
-
-        // Esperar antes de la siguiente consulta.
-        // Evita acumular solicitudes HTTP.
-
-        setTimeout(
-            cicloMonitoreo,
-            INTERVALO_ESTADO
-        );
-    }
+let token = "", ocupado = false, conectado = false, ultimoEstado = null;
+let generacion = 0, editandoPWM = false;
+const controles = ["pwm","horario","antihorario","ciclico","continuo"];
+const tiempos = Array.from(document.querySelectorAll(".controles-tiempo button"));
+function botones() {
+    const autorizado = conectado && !!token && !document.hidden;
+    const config = autorizado && ultimoEstado && !ultimoEstado.activo && !ocupado;
+    elemento("tomar").disabled = !conectado || ocupado || !!token || !ultimoEstado || ultimoEstado.propietario !== "NINGUNO" || document.hidden;
+    elemento("liberar").disabled = !autorizado || ocupado;
+    elemento("btnArrancar").disabled = !config || ultimoEstado.pwm < 80;
+    elemento("btnDetener").disabled = !conectado || ocupado;
+    controles.forEach(id => elemento(id).disabled = !config);
+    tiempos.forEach(b => b.disabled = !config);
+    escribir("permiso", autorizado ? "CONTROL WIFI ACTIVO" : "Sin control local" + (ultimoEstado ? " | Propietario: " + ultimoEstado.propietario : ""));
+    escribir("diagHB", autorizado ? "Renovación activa" : "Sin permiso local");
 }
-
-// ======================================
-// EVENTOS DEL NAVEGADOR
-// ======================================
-
-window.addEventListener(
-    "offline",
-    mostrarDesconexion
-);
-
-document.addEventListener(
-    "visibilitychange",
-    function() {
-
-        if (document.hidden) {
-
-            mostrarDesconexion();
-        }
+function perder() { generacion++; token=""; conectado=false; ultimoEstado=null; editandoPWM=false; mostrarDesconexion(); botones(); }
+async function post(c, permiso) {
+    const ac = new AbortController(); const timer=setTimeout(()=>ac.abort(),650);
+    try {
+        const r=await fetch(c==="HEARTBEAT"?"/api/heartbeat":"/api/comando",{method:"POST",cache:"no-store",headers:{"Content-Type":"text/plain","X-Dosificadora":"1","X-Control":permiso},body:c,signal:ac.signal});
+        if(!r.ok) throw Error("HTTP "+r.status);
+        return await r.text();
+    } finally {clearTimeout(timer);}
+}
+async function accion(c) {
+    if(ocupado || document.hidden || !conectado) return;
+    ocupado=true; botones(); const g=generacion;
+    try {
+        const r=await post(c,token);
+        if(g!==generacion)return;
+        escribir("mensaje",r.split(";")[0]);
+        if(c==="CONTROL:TAKE" && r.startsWith("OK:")) {const m=r.match(/;TOKEN=([a-f0-9]{32})$/);if(!m)throw Error("Token ausente");token=m[1];}
+        if(c==="STOP" || c==="CONTROL:RELEASE" || r.startsWith("ERROR:SIN_AUTORIZACION") || r.startsWith("ERROR:HEARTBEAT"))token="";
+        if(r.startsWith("OK:")) { const e=await consultarAPI("/api/status");if(g===generacion){ultimoEstado=e;mostrarEstado(e);} }
+    } catch(e){perder();escribir("mensaje","Comunicación interrumpida; no se confirma el comando");}
+    finally {ocupado=false;botones();}
+}
+elemento("tomar").onclick=()=>accion("CONTROL:TAKE");
+elemento("liberar").onclick=()=>accion("CONTROL:RELEASE");
+elemento("btnArrancar").onclick=()=>accion("START");
+elemento("btnDetener").onclick=()=>accion(token ? "HALT" : "STOP");
+elemento("horario").onclick=()=>accion("DIR:CW");elemento("antihorario").onclick=()=>accion("DIR:CCW");
+elemento("ciclico").onclick=()=>accion("MODO:CICLICO");elemento("continuo").onclick=()=>accion("MODO:CONTINUO");
+["GIRO:DOWN","GIRO:UP","PAUSA:DOWN","PAUSA:UP"].forEach((c,i)=>tiempos[i].onclick=()=>accion(c));
+elemento("pwm").oninput=()=>{editandoPWM=true;escribir("valorPWM",elemento("pwm").value+"%");};
+elemento("pwm").onchange=()=>{editandoPWM=false;accion("PWM:"+elemento("pwm").value);};
+let hbOcupado=false;
+async function cicloHB(){
+    if(token && !document.hidden && !hbOcupado){
+        hbOcupado=true;const g=generacion;const t=token;
+        try{const r=await post("HEARTBEAT",t);if(g===generacion && token===t && r!=="OK:HEARTBEAT")perder();}
+        catch(e){if(g===generacion && token===t)perder();}
+        finally{hbOcupado=false;}
     }
-);
-
-// ======================================
-// INICIO DEL MONITOREO
-// ======================================
-
-cicloMonitoreo();
-
+    setTimeout(cicloHB,400);
+}
+async function cicloMonitoreo(){
+    if(!document.hidden && !ocupado){const g=generacion;
+        try{const e=await consultarAPI("/api/status");if(g===generacion && !document.hidden && !ocupado){ultimoEstado=e;conectado=true;if(token && e.propietario!=="WIFI")token="";mostrarEstado(e);botones();}
+            if(!token && Date.now()-ultimaConsultaDiagnostico>=5000){ultimaConsultaDiagnostico=Date.now();const d=await consultarAPI("/api/diagnostico");if(g===generacion)mostrarDiagnostico(d);}
+        }catch(e){if(g===generacion)perder();}
+    }
+    setTimeout(cicloMonitoreo,500);
+}
+window.addEventListener("offline",perder);
+window.addEventListener("pagehide",perder);
+document.addEventListener("visibilitychange",()=>{if(document.hidden)perder();});
+botones();cicloHB();cicloMonitoreo();
 </script>
 
 </body>

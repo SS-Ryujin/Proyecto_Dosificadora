@@ -3,6 +3,12 @@
 #include "Motor.h"
 
 // ======================================
+// DOSIFICADORA DE BOMBONES
+// Modulo de seguridad - V1.3
+// Instrumentacion temporal de diagnostico
+// ======================================
+
+// ======================================
 // VARIABLES INTERNAS
 // ======================================
 
@@ -44,6 +50,8 @@ void inicializarSeguridad() {
     Serial.print("Heartbeat timeout: ");
     Serial.print(HEARTBEAT_TIMEOUT_MS);
     Serial.println(" ms");
+
+    Serial.println("Diagnostico temporal: HABILITADO");
 
     Serial.println("Motor detenido");
     Serial.println("--------------------------------");
@@ -187,7 +195,7 @@ bool registrarHeartbeat(CanalControl canal) {
         return false;
     }
 
-    // Una señal tardia no puede recuperar
+    // Una senal tardia no puede recuperar
     // automaticamente un permiso expirado.
 
     if (!heartbeatVigente()) {
@@ -305,17 +313,49 @@ bool autorizarConfiguracion(CanalControl canal) {
 
 void detenerPorSeguridad(MotivoDetencion motivo) {
 
-    // Primero ordenar la detencion del motor.
+    // Registrar el instante de solicitud del paro.
+
+    const uint32_t tSolicitud = millis();
+
+    // Capturar informacion antes de revocar
+    // la autorizacion de control.
+
+    const bool habiaPropietario =
+        propietario != CanalControl::NINGUNO;
+
+    const char* propietarioAnterior =
+        obtenerPropietarioTexto();
+
+    const uint32_t tHeartbeat =
+        ultimoHeartbeat;
+
+    const bool motorEstabaActivo =
+        sistemaMotorActivo();
+
+    // ==================================
+    // DETENER MOTOR
+    // ==================================
 
     detenerMotor();
 
-    // Revocar la autorizacion de control.
+    // Registrar el instante en que termina
+    // la ejecucion de detenerMotor().
+
+    const uint32_t tDetencion = millis();
+
+    // ==================================
+    // REVOCAR AUTORIZACION
+    // ==================================
 
     propietario = CanalControl::NINGUNO;
 
     ultimoHeartbeat = 0;
 
     motivoDetencion = motivo;
+
+    // ==================================
+    // INFORMACION DE DETENCION
+    // ==================================
 
     Serial.println("--------------------------------");
     Serial.println("DETENCION DEL SISTEMA");
@@ -325,6 +365,67 @@ void detenerPorSeguridad(MotivoDetencion motivo) {
 
     Serial.println("Control revocado");
     Serial.println("Propietario: NINGUNO");
+
+    // ==================================
+    // DIAGNOSTICO TEMPORAL
+    // ==================================
+
+    Serial.println("----- DIAGNOSTICO TEMPORAL -----");
+
+    Serial.print("Propietario anterior: ");
+    Serial.println(propietarioAnterior);
+
+    Serial.print("Motor estaba activo: ");
+    Serial.println(
+        motorEstabaActivo ? "SI" : "NO"
+    );
+
+    // Instante del ultimo heartbeat.
+
+    Serial.print("T_HEARTBEAT_MS: ");
+
+    if (habiaPropietario) {
+
+        Serial.println(tHeartbeat);
+
+    } else {
+
+        Serial.println("NO_APLICA");
+    }
+
+    // Instante de solicitud de detencion.
+
+    Serial.print("T_SOLICITUD_MS: ");
+    Serial.println(tSolicitud);
+
+    // Instante de finalizacion de detenerMotor().
+
+    Serial.print("T_DETENCION_MS: ");
+    Serial.println(tDetencion);
+
+    // Tiempo transcurrido sin heartbeat.
+
+    Serial.print("TIEMPO_SIN_HEARTBEAT_MS: ");
+
+    if (habiaPropietario) {
+
+        Serial.println(
+            tSolicitud - tHeartbeat
+        );
+
+    } else {
+
+        Serial.println("NO_APLICA");
+    }
+
+    // Tiempo de ejecucion de la orden de paro.
+
+    Serial.print("TIEMPO_EJECUCION_PARO_MS: ");
+
+    Serial.println(
+        tDetencion - tSolicitud
+    );
+
     Serial.println("--------------------------------");
 }
 
