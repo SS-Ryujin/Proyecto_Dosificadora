@@ -16,6 +16,7 @@ El proyecto contempla la detección de producto en una tolva, el accionamiento d
 - Sensor de vibración.
 - Paro de emergencia.
 
+<<<<<<< Updated upstream
 ## Funcionamiento
 
 El sistema cuenta con una interfaz de bienvenida y un menú principal desde el cual se podrá controlar la máquina.
@@ -40,3 +41,7 @@ También incluye un submenú para consultar información de los sensores y super
 ## Estado del proyecto
 
 Proyecto en desarrollo. Las funciones descritas corresponden al diseño previsto y no implican que todas estén implementadas o validadas físicamente.
+=======
+## Librerias
+-libros
+>>>>>>> Stashed changes
